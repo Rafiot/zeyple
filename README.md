@@ -89,6 +89,11 @@ You need to be _root_ here - make sure you understand what you are doing.
     content_filter = zeyple
     CONF
 
+    Or you can add the followin line to the pickup queue. This way, all the local mails will be filtered:
+
+            -o content_filter=zeyple:dummy
+
+
     cp zeyple.py /usr/local/bin/zeyple.py
     chmod 744 /usr/local/bin/zeyple.py && chown zeyple: /usr/local/bin/zeyple.py
 
