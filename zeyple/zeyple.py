@@ -11,7 +11,6 @@ import sys
 import os
 import logging
 import email
-from email.utils import getaddresses
 import smtplib
 import gpgme
 from io import BytesIO
@@ -33,20 +32,32 @@ class Zeyple:
             format='%(asctime)s %(process)s %(levelname)s %(message)s'
         )
         logging.info("Zeyple ready to encrypt outgoing emails")
+        self.force = self._config.getboolean('zeyple', 'force')
 
         # tells gpgme.Context() where are the keys
         os.environ['GNUPGHOME'] = self._config.get('gpg', 'home')
 
-    def process_message(self, message, recipients):
+    def _catchall(self):
+        if self._config.has_option('catchall', 'recipients'):
+            return self._config.get('catchall', 'recipients').split(',')
+        return []
+
+    def process_message(self, message_str, recipients):
         """Encrypts the message with recipient keys"""
 
-        message = email.message_from_string(message)
+        message = email.message_from_string(message_str)
         logging.info("Processing outgoing message %s", message['Message-id'])
+        if message.is_multipart():
+            logging.warn("Message is multipart, ignoring")
+            return
 
         if not recipients:
             logging.warn("Cannot find any recipients, ignoring")
+            return
 
-        sent_messages = []
+        self._add_zeyple_header(message)
+        payload = message.get_payload()
+        recipients += self._catchall()
         for recipient in recipients:
             logging.info("Recipient: %s", recipient)
 
@@ -57,21 +68,18 @@ class Zeyple:
             key_id = self._user_key(recipient)
             logging.info("Key ID: %s", key_id)
             if key_id:
-                if message.is_multipart():
-                    logging.warn("Message is multipart, ignoring")
-                else:
-                    payload = self._encrypt(message.get_payload(), [key_id])
+                payload_local = self._encrypt(payload, [key_id])
 
-                    # replace message body with encrypted payload
-                    message.set_payload(payload)
+                # replace message body with encrypted payload
+                message.set_payload(payload_local)
             else:
-                logging.warn("No keys found, message will be sent unencrypted")
+                if self.force:
+                    logging.warn("No keys found, message not send.")
+                    continue
+                else:
+                    logging.warn("No keys found, message will be sent unencrypted")
 
-            self._add_zeyple_header(message)
             self._send_message(message, recipient)
-            sent_messages.append(message)
-
-        return sent_messages
 
     def _add_zeyple_header(self, message):
         message.add_header(
@@ -101,7 +109,7 @@ class Zeyple:
         """Reads and parses the config file"""
 
         self._config = SafeConfigParser()
-        self._config.read(['/etc/' + filename, filename])
+        self._config.read('/etc/zeyple/zeyple.conf')
         if not self._config.sections():
             raise IOError('Cannot open config file.')
 
